@@ -3,19 +3,11 @@ require_relative '01_sql_object'
 
 module Searchable
   def where(params)
-    where_line = params.map do |col, _|
-      "#{table_name}.#{col} = ?"
-    end.join(" AND ")
-
-    where_vals = params.values
-
     relation = Relation.new(
-      where_line: where_line,
-      where_vals: where_vals,
-      from: table_name,
+      klass: self,
+      where_pairs: params,
+      from: table_name
     )
-
-    relation.execute.map { |result| new(result) }
   end
 end
 
@@ -24,15 +16,14 @@ class SQLObject
   extend Searchable
 end
 
-class Relation < SQLObject
+class Relation
   attr_reader :opts
 
   def initialize(opts = {})
     defaults = {
       select: ["*"],
       from: [],
-      where_line: [],
-      where_vals: [],
+      where_pairs: {}
     }
 
     @opts = defaults.merge(opts)
@@ -45,23 +36,44 @@ class Relation < SQLObject
       FROM
         #{opts[:from]}
       WHERE
-        #{opts[:where_line]}
+        #{where_line}
     SQL
-  end
-
-  def table_name
-    "(#{self.subquery})"
   end
 
   def execute
     return cached_results[subquery] if cached_results[subquery]
 
-    results = DBConnection.execute(subquery, opts[:where_vals])
+    results = DBConnection.execute(subquery, where_vals)
 
-    cached_results[subquery] = results
+    cached_results[subquery] = opts[:klass].parse_all(results)
   end
 
   def cached_results
     @cached_results ||= {}
+  end
+
+  def where_line
+    opts[:where_pairs].map do |col, _|
+      "#{opts[:from]}.#{col} = ?"
+    end.join(" AND ")
+  end
+
+  def where_vals
+    opts[:where_pairs].values
+  end
+
+# allows chaining
+  def where(params)
+    opts[:where_pairs].merge!(params)
+  end
+
+  def method_missing(*args)
+    values = execute
+    values.send(*args)
+  end
+
+  def ==(other_obj)
+    values = execute
+    values == other_obj
   end
 end
